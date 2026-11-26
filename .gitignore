@@ -1,0 +1,20 @@
+# Python — machine-specific, fully regenerable (pip install -e ".[dev]"),
+# not worth backing up: a compiled venv doesn't even transfer across
+# machines/OS.
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+
+# macOS
+.DS_Store
+
+# Data — never committed. Presets are the copyrighted work of their
+# authors; trained models and generated presets are derived from them.
+# Everything under data/ is created locally by `serumgen import/train/generate`.
+data/
+*.SerumPreset
+*.fxp
+map_*.html

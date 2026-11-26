@@ -1,0 +1,1131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>SerumGen</title>
+<link rel="icon" type="image/svg+xml" href="/static/brand/favicon.svg">
+<style>
+  :root {
+    --bg: #f5f5f7;
+    --surface: rgba(255, 255, 255, 0.72);
+    --surface-solid: #ffffff;
+    --hairline: rgba(0, 0, 0, 0.08);
+    --text: #1d1d1f;
+    --text-2: #6e6e73;
+    --text-3: #a1a1a6;
+    --fill: rgba(118, 118, 128, 0.12);
+    --ink: #1d1d1f;
+    --type: #6b8fb5;
+    --shadow-sm: 0 1px 2px rgba(0,0,0,.04), 0 2px 8px rgba(0,0,0,.05);
+    --shadow-lg: 0 2px 6px rgba(0,0,0,.04), 0 12px 40px rgba(0,0,0,.09);
+    --ease: cubic-bezier(.2, .8, .2, 1);
+    --glass-tint: rgba(255, 255, 255, 0.22);
+    --glass-hi: rgba(255, 255, 255, 0.9);    /* specular edge */
+    --glass-rim: rgba(255, 255, 255, 0.35);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 15px/1.47 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Helvetica Neue", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+  button { font: inherit; color: inherit; }
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  .tnum { font-variant-numeric: tabular-nums; }
+
+  /* ---------- canvas fills the window; chrome floats above it ---------- */
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  /* density glow: small canvas, stretched + moved by the compositor (see drawGlow) */
+  #glow { inset: auto; left: 0; top: 0; transform-origin: 0 0; pointer-events: none; opacity: 0; }
+
+  /* ---------- translucent toolbar ---------- */
+  header {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 10;
+    display: flex; align-items: center; gap: 24px;
+    padding: 14px 24px;
+    background: rgba(245, 245, 247, 0.72);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    backdrop-filter: saturate(180%) blur(20px);
+    border-bottom: 1px solid var(--hairline);
+  }
+  .brand { display: flex; flex-direction: column; flex: none; }
+  .brand h1 { line-height: 0; margin: 2px 0 6px; }
+  .brand h1 img { height: 17px; width: auto; display: block; }
+  .brand p { font-size: 12px; color: var(--text-2); letter-spacing: -0.003em; }
+
+  /* ---------- segmented control ---------- */
+  .seg-wrap { margin-left: auto; min-width: 0; overflow-x: auto; scrollbar-width: none;
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+            mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent); }
+  .seg-wrap.at-end { -webkit-mask-image: none; mask-image: none; }
+  .seg-wrap::-webkit-scrollbar { display: none; }
+  .seg {
+    position: relative; display: inline-flex; padding: 2px;
+    background: var(--fill); border-radius: 9px;
+  }
+  .seg-thumb {
+    position: absolute; top: 2px; bottom: 2px; left: 0;
+    background: var(--surface-solid); border-radius: 7px;
+    box-shadow: 0 3px 8px rgba(0,0,0,.08), 0 0 0 .5px rgba(0,0,0,.04);
+    transition: transform .38s var(--ease), width .38s var(--ease);
+    opacity: 0;
+  }
+  .seg button {
+    position: relative; z-index: 1;
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 5px 14px; border: 0; background: none; border-radius: 7px;
+    font-size: 13px; font-weight: 500; letter-spacing: -0.005em;
+    color: var(--text-2); cursor: pointer; white-space: nowrap;
+    transition: color .2s;
+  }
+  .seg button:hover { color: var(--text); }
+  .seg button.active { color: var(--text); }
+  .seg button:active { opacity: .7; }
+  .seg .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+  .seg .n { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+
+  /* ---------- hover tooltip ---------- */
+  #tooltip {
+    position: fixed; z-index: 5; pointer-events: none;
+    padding: 4px 10px; border-radius: 8px;
+    background: rgba(255,255,255,.86);
+    -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+    box-shadow: var(--shadow-sm); border: .5px solid var(--hairline);
+    font-size: 12px; font-weight: 500; white-space: nowrap; color: var(--text);
+    transform: translate(-50%, calc(-100% - 12px));
+    opacity: 0; transition: opacity .12s;
+  }
+
+  /* ---------- empty / loading state ---------- */
+  #empty {
+    position: fixed; inset: 0; z-index: 1; pointer-events: none;
+    display: flex; flex-direction: column; gap: 10px;
+    align-items: center; justify-content: center; text-align: center;
+    color: var(--text-2); font-size: 15px;
+  }
+  #empty code {
+    font-size: 13px; background: var(--surface-solid); color: var(--text);
+    padding: 6px 12px; border-radius: 8px; box-shadow: var(--shadow-sm);
+  }
+
+  /* ---------- result card ---------- */
+  #card {
+    position: fixed; z-index: 10; top: 84px; right: 24px; width: 280px;
+    padding: 18px;
+    background: var(--surface);
+    -webkit-backdrop-filter: saturate(180%) blur(24px);
+    backdrop-filter: saturate(180%) blur(24px);
+    border: .5px solid var(--hairline); border-radius: 18px;
+    box-shadow: var(--shadow-lg);
+    transform-origin: top right;
+    opacity: 0; transform: scale(.96); filter: blur(4px); pointer-events: none;
+    transition: opacity .3s var(--ease), transform .4s var(--ease), filter .3s var(--ease);
+  }
+  #card.show { opacity: 1; transform: none; filter: none; pointer-events: auto; }
+  .eyebrow {
+    font-size: 11px; font-weight: 600; letter-spacing: .02em;
+    color: var(--text-3); text-transform: uppercase;
+  }
+  .card-title {
+    display: flex; align-items: center; gap: 8px;
+    margin: 6px 0 2px; font-size: 20px; font-weight: 600; letter-spacing: -0.024em;
+    word-break: break-all; line-height: 1.2;
+  }
+  .card-title .dot { width: 10px; height: 10px; border-radius: 50%; flex: none;
+    background: var(--type); box-shadow: 0 0 0 3px #fff, 0 0 0 3.5px var(--hairline); }
+  .meta { font-size: 12px; color: var(--text-2); }
+  .donor { font-size: 12px; color: var(--text-3); margin: 1px 0 16px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .recent-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .dl-all {
+    font-size: 12px; font-weight: 500; color: var(--text); text-decoration: none;
+    padding: 3px 9px; margin-right: -4px; border-radius: 980px; background: var(--fill);
+    transition: background .15s, transform .1s ease-out; white-space: nowrap;
+  }
+  @media (hover: hover) and (pointer: fine) { .dl-all:hover { background: rgba(118,118,128,.2); } }
+  .dl-all:active { transform: scale(.96); }
+  .btn-dl {
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    width: 100%; padding: 10px 16px; border-radius: 980px;
+    background: var(--ink); color: #fff; text-decoration: none;
+    font-size: 14px; font-weight: 500; letter-spacing: -0.01em;
+    transition: transform .1s ease-out, background .2s;
+  }
+  .btn-dl:hover { background: #000; }
+  .btn-dl:active { transform: scale(.97); }
+  .btn-dl svg { width: 15px; height: 15px; }
+
+  #recent { margin-top: 18px; border-top: 1px solid var(--hairline); padding-top: 12px; }
+  #recent[hidden] { display: none; }
+  #recent ul { list-style: none; margin-top: 6px; max-height: 180px; overflow-y: auto; }
+  #recent li {
+    display: flex; align-items: center; gap: 9px;
+    margin: 0 -8px; padding: 6px 8px; border-radius: 8px;
+    font-size: 13px; cursor: pointer; transition: background .15s;
+  }
+  #recent li:hover { background: var(--fill); }
+  #recent li:active { background: rgba(118,118,128,.2); }
+  #recent li.sel { background: rgba(118,118,128,.16); }
+  #recent li .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--type); flex: none; }
+  #recent li .t { margin-left: auto; color: var(--text-3); font-size: 12px; }
+
+  canvas#cv { touch-action: none; cursor: grab; }
+
+  /* ---------- zoom controls ---------- */
+  .zoom {
+    position: fixed; z-index: 10; right: 24px; bottom: 28px;
+    display: flex; flex-direction: column; padding: 4px; gap: 2px;
+    background: var(--surface);
+    -webkit-backdrop-filter: saturate(180%) blur(24px);
+    backdrop-filter: saturate(180%) blur(24px);
+    border: .5px solid var(--hairline); border-radius: 14px;
+    box-shadow: var(--shadow-sm);
+  }
+  .zoom button {
+    width: 32px; height: 32px; border: 0; border-radius: 10px; background: none;
+    display: grid; place-items: center; cursor: pointer; color: var(--text);
+    transition: background .15s, transform .1s ease-out, opacity .15s;
+  }
+  .zoom button svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  @media (hover: hover) and (pointer: fine) { .zoom button:hover { background: var(--fill); } }
+  .zoom button:active { transform: scale(.94); }
+  .zoom button:disabled { opacity: .3; cursor: default; transform: none; background: none; }
+
+  /* ---------- floating control bar ---------- */
+  .dock {
+    position: fixed; z-index: 10; left: 50%; bottom: 28px;
+    transform: translateX(-50%);
+    display: flex; align-items: center; gap: 22px;
+    padding: 10px 10px 10px 24px;
+    background: var(--surface);
+    -webkit-backdrop-filter: saturate(180%) blur(24px);
+    backdrop-filter: saturate(180%) blur(24px);
+    border: .5px solid var(--hairline); border-radius: 980px;
+    box-shadow: var(--shadow-lg);
+    white-space: nowrap;
+  }
+  .ctrl { display: flex; align-items: center; gap: 12px; }
+  .ctrl label { font-size: 13px; font-weight: 500; color: var(--text-2); }
+  .lbl { display: inline-flex; align-items: center; gap: 6px; }
+  .info { position: relative; display: inline-flex; }
+  .info-btn {
+    width: 15px; height: 15px; padding: 0; border: 0; border-radius: 50%;
+    display: grid; place-items: center; cursor: help;
+    background: var(--fill); color: var(--text-2);
+    font: italic 600 10px/1 Georgia, "Times New Roman", serif;
+    transition: background .15s, color .15s;
+  }
+  .info-btn:hover, .info-btn:focus-visible { background: var(--text); color: #fff; outline: none; }
+  .info-tip {
+    position: absolute; left: 50%; bottom: calc(100% + 14px);
+    width: 240px; padding: 10px 12px; border-radius: 10px;
+    background: var(--surface-solid); color: var(--text);
+    border: .5px solid var(--hairline); box-shadow: var(--shadow-lg);
+    font-size: 12px; font-weight: 400; line-height: 1.45; white-space: normal;
+    opacity: 0; pointer-events: none;
+    transform: translate(-50%, 4px);
+    transition: opacity .15s ease, transform .15s ease;
+  }
+  .info:hover .info-tip, .info-btn:focus-visible + .info-tip {
+    opacity: 1; transform: translate(-50%, 0);
+  }
+  @media (prefers-reduced-motion: reduce) { .info-tip { transition: none; } }
+  #tempval { font-size: 13px; width: 32px; color: var(--text); }
+  #status { font-size: 12px; color: var(--text-3); min-width: 110px; }
+
+  input[type=range] {
+    -webkit-appearance: none; appearance: none; width: 170px; height: 22px;
+    background: transparent; cursor: pointer; --p: 50%;
+  }
+  input[type=range]::-webkit-slider-runnable-track {
+    height: 4px; border-radius: 2px;
+    background: linear-gradient(to right, var(--ink) var(--p), #e3e3e8 var(--p));
+  }
+  input[type=range]::-moz-range-track { height: 4px; border-radius: 2px; background: #e3e3e8; }
+  input[type=range]::-moz-range-progress { height: 4px; border-radius: 2px; background: var(--ink); }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 22px; height: 22px; margin-top: -9px;
+    border-radius: 50%; background: #fff; border: 0;
+    box-shadow: 0 0 0 .5px rgba(0,0,0,.06), 0 3px 8px rgba(0,0,0,.15), 0 1px 1px rgba(0,0,0,.1);
+    transition: transform .15s var(--ease);
+  }
+  input[type=range]:active::-webkit-slider-thumb { transform: scale(1.1); }
+  input[type=range]::-moz-range-thumb {
+    width: 22px; height: 22px; border-radius: 50%; background: #fff; border: 0;
+    box-shadow: 0 0 0 .5px rgba(0,0,0,.06), 0 3px 8px rgba(0,0,0,.15);
+  }
+  input[type=range]:focus-visible { outline: none; }
+  input[type=range]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 4px rgba(0,113,227,.3), 0 3px 8px rgba(0,0,0,.15); }
+
+  #gen {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 11px 24px; border: 0; border-radius: 980px;
+    background: var(--ink); color: #fff; cursor: pointer;
+    font-size: 15px; font-weight: 500; letter-spacing: -0.01em;
+    transition: transform .1s ease-out, background .2s, opacity .2s;
+  }
+  #gen:hover { background: #000; }
+  #gen:active { transform: scale(.96); }
+  #gen:disabled { opacity: .4; cursor: default; transform: none; }
+  #gen.busy { opacity: 1; }
+  #gen .spin {
+    width: 14px; height: 14px; border-radius: 50%; display: none;
+    border: 2px solid rgba(255,255,255,.3); border-top-color: #fff;
+    animation: spin .7s linear infinite;
+  }
+  #gen.busy .spin { display: inline-block; }
+  #gen kbd {
+    font: 500 11px/1 -apple-system, system-ui, sans-serif; color: rgba(255,255,255,.55);
+    border: 1px solid rgba(255,255,255,.22); border-radius: 5px; padding: 2px 5px;
+  }
+  #gen.busy kbd { display: none; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  :focus-visible { outline: 3px solid rgba(0,113,227,.35); outline-offset: 2px; }
+
+  /* ---------- liquid glass (dock) ----------
+     Clear tint + strong blur/saturation, a bright specular rim on the top
+     edge, a softer one underneath, and an inner sheen layer. */
+  .dock {
+    background: linear-gradient(180deg, var(--glass-tint), transparent 140%), var(--glass-tint);
+    -webkit-backdrop-filter: blur(14px) saturate(200%) brightness(1.05);
+            backdrop-filter: blur(14px) saturate(200%) brightness(1.05);
+    border-color: transparent;
+    box-shadow:
+      inset 0 1px 0.5px var(--glass-hi),
+      inset 0 -1px 1px var(--glass-rim),
+      inset 1px 0 1px var(--glass-rim), inset -1px 0 1px var(--glass-rim),
+      inset 0 0 18px var(--glass-rim),
+      0 0 0 .5px var(--hairline),
+      0 10px 36px rgba(0, 0, 0, .12), 0 2px 6px rgba(0, 0, 0, .05);
+  }
+  .dock::before {
+    content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+    background: radial-gradient(120% 140% at 30% -20%, var(--glass-hi), transparent 55%);
+    opacity: .35; mix-blend-mode: soft-light; z-index: -1;
+  }
+
+  /* Section menu: the full row (with counts) needs ~1310px beside the logo.
+     Narrower: drop the counts, then stack under the logo, then wrap to a grid. */
+  @media (max-width: 1340px) {
+    .seg .n { display: none; }
+    .seg button { padding: 5px 11px; gap: 6px; }
+  }
+  @media (max-width: 960px) {
+    header { flex-direction: column; align-items: stretch; gap: 10px; }
+    .seg-wrap { margin-left: 0; }
+  }
+  /* Phones: the menu collapses behind a button showing the current section. */
+  .menu-btn { display: none; }
+  @media (max-width: 700px) {
+    header { flex-direction: row; align-items: center; justify-content: space-between; gap: 12px; }
+    .brand { flex: 0 1 auto; min-width: 0; }
+    .brand p { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .menu-btn {
+      display: inline-flex; align-items: center; gap: 8px; flex: none;
+      padding: 7px 10px 7px 12px; border: 0; border-radius: 980px;
+      background: var(--fill); color: var(--text); cursor: pointer;
+      font-size: 14px; font-weight: 500; letter-spacing: -0.01em;
+      transition: background .15s, transform .1s ease-out;
+    }
+    .menu-btn:active { transform: scale(.96); }
+    .menu-btn .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--type); }
+    .menu-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor;
+      stroke-width: 1.7; stroke-linecap: round; }
+    .menu-btn svg path { transition: transform .25s var(--ease), opacity .2s; transform-origin: 9px 9px; }
+    header.menu-open .menu-btn svg .l1 { transform: translateY(4px) rotate(45deg); }
+    header.menu-open .menu-btn svg .l2 { opacity: 0; }
+    header.menu-open .menu-btn svg .l3 { transform: translateY(-4px) rotate(-45deg); }
+
+    .seg-wrap {
+      position: absolute; top: calc(100% + 8px); left: 16px; right: 16px;
+      overflow: auto; max-height: calc(100dvh - 120px);
+      -webkit-mask-image: none; mask-image: none;
+      padding: 6px; border-radius: 16px;
+      background: var(--surface-solid); border: .5px solid var(--hairline);
+      box-shadow: var(--shadow-lg);
+      opacity: 0; visibility: hidden; transform: translateY(-6px) scale(.98);
+      transform-origin: top right;
+      transition: opacity .18s var(--ease), transform .22s var(--ease), visibility 0s .22s;
+    }
+    header.menu-open .seg-wrap {
+      opacity: 1; visibility: visible; transform: none;
+      transition: opacity .18s var(--ease), transform .22s var(--ease);
+    }
+    .seg { display: flex; flex-direction: column; gap: 2px; padding: 0; background: none; width: 100%; }
+    .seg-thumb { display: none; }
+    .seg button { padding: 11px 12px; gap: 10px; font-size: 15px; border-radius: 10px; }
+    .seg button.active { background: var(--fill); }
+    .seg .n { display: inline; margin-left: auto; }
+  }
+  @media (max-width: 360px) { .brand p { display: none; } }
+  @media (max-width: 760px) {
+    #card { top: auto; bottom: 108px; left: 16px; right: 16px; width: auto; transform-origin: bottom center; }
+    .dock { left: 16px; right: 16px; transform: none; gap: 14px; padding-left: 18px; }
+    #status { display: none; }
+    input[type=range] { width: 100%; min-width: 60px; }
+    .ctrl { flex: 1; min-width: 0; gap: 8px; }
+    .ctrl label { display: none; }
+    .info-tip { left: -10px; transform: translateY(4px); }
+    .info:hover .info-tip, .info-btn:focus-visible + .info-tip { transform: none; }
+    #gen { padding: 11px 20px; }
+    .zoom { right: 16px; bottom: 104px; }
+    body:has(#card.show) .zoom { display: none; }   /* the card sheet covers this corner */
+  }
+  @media (hover: none) { #gen kbd { display: none; } }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition-duration: .01ms !important; }
+    #card { filter: none; transform: none; transition: opacity .2s !important; }
+  }
+  @media (prefers-reduced-transparency: reduce) {
+    header, .dock, #card, #tooltip { background: #fff; -webkit-backdrop-filter: none; backdrop-filter: none; }
+  }
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+
+<header>
+  <div class="brand">
+    <h1><img src="/static/brand/serumgen-wordmark.svg" alt="SerumGen"></h1>
+    <p>Generative AI sound design for Serum 2.</p>
+  </div>
+  <button class="menu-btn" id="menubtn" aria-expanded="false" aria-controls="seg" aria-label="Choose section">
+    <span class="dot"></span><span id="menulabel"></span>
+    <svg viewBox="0 0 18 18" aria-hidden="true"><path class="l1" d="M3 5h12"/><path class="l2" d="M3 9h12"/><path class="l3" d="M3 13h12"/></svg>
+  </button>
+  <div class="seg-wrap"><div class="seg" id="seg"><div class="seg-thumb" id="thumb"></div></div></div>
+</header>
+
+<div id="tooltip"></div>
+<div id="empty">Loading…</div>
+
+<aside id="card" aria-live="polite">
+  <div class="eyebrow">Generated preset</div>
+  <div class="card-title"><span class="dot" id="carddot"></span><span id="cardname"></span></div>
+  <div class="meta tnum" id="cardmeta"></div>
+  <div class="donor" id="carddonor"></div>
+  <a class="btn-dl" id="dl" href="#">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg>
+    Download .SerumPreset
+  </a>
+  <div id="recent" hidden>
+    <div class="recent-head">
+      <div class="eyebrow" id="recenthead">This session</div>
+      <a id="dlall" class="dl-all" href="#" download>Download all</a>
+    </div>
+    <ul id="recentlist"></ul>
+  </div>
+</aside>
+
+<div class="zoom" role="group" aria-label="Map zoom">
+  <button id="zin" title="Zoom in (+)" aria-label="Zoom in"><svg viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9"/></svg></button>
+  <button id="zout" title="Zoom out (−)" aria-label="Zoom out"><svg viewBox="0 0 16 16"><path d="M3.5 8h9"/></svg></button>
+  <button id="zfit" title="Fit (0)" aria-label="Reset zoom"><svg viewBox="0 0 16 16"><path d="M3 6V3h3M10 3h3v3M13 10v3h-3M6 13H3v-3"/></svg></button>
+</div>
+
+<div class="dock">
+  <div class="ctrl">
+    <span class="lbl">
+      <label for="temp">Temperature</label>
+      <span class="info">
+        <button type="button" class="info-btn" aria-label="What is temperature?" aria-describedby="temp-tip">i</button>
+        <span class="info-tip" id="temp-tip" role="tooltip">How adventurous each new preset is. Low stays close to sounds already in the library. High wanders further for more unusual, surprising results.</span>
+      </span>
+    </span>
+    <input type="range" id="temp" min="0.2" max="1.8" step="0.05" value="0.8">
+    <span id="tempval" class="tnum">0.80</span>
+  </div>
+  <span id="status" class="tnum"></span>
+  <button id="gen" disabled><span class="spin"></span><span id="genlabel">Generate</span><kbd>G</kbd></button>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const cv = $("cv"), ctx = cv.getContext("2d");
+const tooltip = $("tooltip"), segEl = $("seg"), thumb = $("thumb");
+const emptyEl = $("empty"), card = $("card"), statusEl = $("status");
+const genBtn = $("gen"), genLabel = $("genlabel");
+const tempInput = $("temp"), tempVal = $("tempval");
+const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+// Muted, Apple-ish palette. Falls back to the server's color for unknown types.
+const PALETTE = {
+  bass: "#6b8fb5", lead: "#7fa894", pad: "#c4a06a", pluck: "#8f86b8",
+  keys: "#c99aa9", arp: "#8fae7e", seq: "#c98d6f", chord: "#b58399",
+  vox: "#7aa39b", fx: "#9a9891", drum: "#a08670", unknown: "#b4b2a9",
+};
+const colorFor = t => PALETTE[t.type] || t.color || "#8e8e93";
+
+let state = {
+  type: null, color: "#6b8fb5",
+  lib: [], gen: [], selected: null,
+  // every preset generated since page load, all types, oldest first. Only a
+  // page reload clears it. state.gen is the current type's slice: each type
+  // (section) has its own list and batch download, and map positions are
+  // only meaningful within one type's projection anyway.
+  session: [],
+  bounds: null, view: null, mouse: null, hover: null,
+  enterAt: 0, busy: false,
+  // screen space the result card covers; the camera frames around it
+  inset: { r: 0, b: 0 }, insetTarget: { r: 0, b: 0 },
+  // user zoom/pan, layered on top of the automatic framing (z = zoom factor,
+  // x/y = screen-space pan in CSS px). cam is what's drawn, camTarget is where
+  // it's gliding to; direct manipulation (wheel, drag) sets both.
+  cam: { z: 1, x: 0, y: 0 }, camTarget: { z: 1, x: 0, y: 0 },
+  interactAt: 0,
+};
+
+/* ---------- geometry ---------- */
+function fit() {
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = innerWidth * dpr; cv.height = innerHeight * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  state.cssW = innerWidth; state.cssH = innerHeight;
+  computeView();
+  requestDraw();   // resizing the canvas clears it
+}
+
+// Automatic framing: fit `bounds` into the free area (minus header, dock and
+// the open card). Also returns that area, whose centre is the zoom pivot.
+function baseView(bounds, inset) {
+  const header = document.querySelector("header").getBoundingClientRect().height;
+  const mTop = header + 32, mBot = 120, mX = 56;
+  const { minX: dMinX, maxX, minY: dMinY, maxY } = bounds;
+  const dw = maxX - dMinX, dh = maxY - dMinY;
+  const aw = state.cssW - 2 * mX - inset.r, ah = state.cssH - mTop - mBot - inset.b;
+  const scale = Math.min(aw / dw, ah / dh);
+  const offX = mX + (aw - dw * scale) / 2;
+  const offY = mBot + inset.b + (ah - dh * scale) / 2;
+  return { dMinX, dMinY, scale, offX, offY, h: state.cssH,
+           area: { l: mX, r: mX + aw, t: mTop, b: mTop + ah, cx: mX + aw / 2, cy: mTop + ah / 2 } };
+}
+// Fold the user camera (zoom z about the area centre, then pan) into the same
+// {scale, offX, offY} shape, so toPx, hit-testing and the glow's affine
+// transform all keep working unchanged.
+function withCam(v, cam) {
+  const { cx, cy } = v.area, z = cam.z;
+  return { ...v, scale: v.scale * z,
+           offX: (v.offX - cx) * z + cx + cam.x,
+           offY: v.h - cy - cam.y - (v.h - v.offY - cy) * z };
+}
+function computeView() {
+  if (!state.bounds || !state.cssW) { state.view = null; return; }
+  state.view = withCam(baseView(state.bounds, state.inset), state.cam);
+}
+
+function toPx(p) {
+  const v = state.view;
+  return { x: v.offX + (p.x - v.dMinX) * v.scale,
+           y: v.h - (v.offY + (p.y - v.dMinY) * v.scale) };
+}
+
+/* ---------- camera ----------
+   Frame the dense core (2nd–98th percentile) rather than the extremes, so a
+   handful of outlier presets can't shrink the whole map into a corner.
+   Generated points always stay in frame; the camera glides to include them. */
+function pct(sorted, q) { return sorted[Math.min(sorted.length - 1, Math.max(0, Math.round(q * (sorted.length - 1))))]; }
+function targetBounds() {
+  const xs = state.lib.map(p => p.x).sort((a, b) => a - b);
+  const ys = state.lib.map(p => p.y).sort((a, b) => a - b);
+  let minX = pct(xs, .02), maxX = pct(xs, .98), minY = pct(ys, .02), maxY = pct(ys, .98);
+  const px = (maxX - minX || 1) * .18, py = (maxY - minY || 1) * .18;
+  minX -= px; maxX += px; minY -= py; maxY += py;
+  for (const g of state.gen) {
+    const gx = (maxX - minX) * .06, gy = (maxY - minY) * .06;
+    minX = Math.min(minX, g.x - gx); maxX = Math.max(maxX, g.x + gx);
+    minY = Math.min(minY, g.y - gy); maxY = Math.max(maxY, g.y + gy);
+  }
+  return { minX, maxX, minY, maxY };
+}
+let lastFrame = performance.now();
+function stepCamera(now) {
+  const dt = lastFrame ? Math.min(.05, (now - lastFrame) / 1000) : 1 / 60; lastFrame = now;
+  const b = state.bounds, t = state.targetBounds;
+  state.cameraMoving = false;
+  if (!b || !t) return;
+  const k = reduceMotion ? 1 : 1 - Math.exp(-dt * 9);
+  let moving = false;
+  for (const key of ["minX", "maxX", "minY", "maxY"]) {
+    const d = t[key] - b[key];
+    if (Math.abs(d) > 1e-4) { b[key] += d * k; moving = true; }
+  }
+  for (const key of ["r", "b"]) {
+    const d = state.insetTarget[key] - state.inset[key];
+    if (Math.abs(d) > .5) { state.inset[key] += d * k; moving = true; }
+    else state.inset[key] = state.insetTarget[key];
+  }
+  const c = state.cam, ct = state.camTarget;
+  const dz = Math.log(ct.z / c.z);
+  if (Math.abs(dz) > 1e-3) { c.z *= Math.exp(dz * k); moving = true; } else c.z = ct.z;
+  for (const key of ["x", "y"]) {
+    const d = ct[key] - c[key];
+    if (Math.abs(d) > .3) { c[key] += d * k; moving = true; } else c[key] = ct[key];
+  }
+  state.cameraMoving = moving;
+  if (moving) { computeView(); if (state.mouse) updateHover(); }
+}
+
+/* ---------- motion helpers ---------- */
+const easeOut = t => 1 - Math.pow(1 - Math.min(Math.max(t, 0), 1), 3);
+// Critically damped spring step response (damping 1.0, response 0.4s).
+const OMEGA = 2 * Math.PI / 0.4;
+const spring = t => t <= 0 ? 0 : 1 - (1 + OMEGA * t) * Math.exp(-OMEGA * t);
+
+function hexA(hex, a) {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${n >> 16 & 255},${n >> 8 & 255},${n & 255},${a})`;
+}
+
+/* ---------- drawing ---------- */
+/* ---------- density ----------
+   Each library point gets a 0..1 local-density rank (grid binning over the
+   framed core, 3x3 neighbourhood), computed once per type. It drives both the
+   glow underlay and per-dot weight, so clusters read as terrain instead of
+   one uniform smear. */
+function computeDensity() {
+  const pts = state.lib, G = 48;
+  if (!pts.length) return;
+  const b = targetBounds();
+  const w = (b.maxX - b.minX) || 1, h = (b.maxY - b.minY) || 1;
+  const grid = new Float32Array(G * G);
+  const cell = p => [Math.min(G - 1, Math.max(0, Math.floor((p.x - b.minX) / w * G))),
+                     Math.min(G - 1, Math.max(0, Math.floor((p.y - b.minY) / h * G)))];
+  for (const p of pts) { const [i, j] = cell(p); grid[j * G + i]++; }
+  const raw = pts.map(p => {
+    const [i, j] = cell(p); let s = 0;
+    for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+      const a = i + di, c = j + dj;
+      if (a >= 0 && a < G && c >= 0 && c < G) s += grid[c * G + a] * (di || dj ? .5 : 1);
+    }
+    return s;
+  });
+  // rank-normalise so one extreme cluster doesn't flatten everything else
+  const order = raw.map((v, i) => i).sort((a, b) => raw[a] - raw[b]);
+  order.forEach((idx, r) => { pts[idx].d = order.length > 1 ? r / (order.length - 1) : 1; });
+}
+
+// Gaussian kernel-density field at quarter resolution, tone-mapped into a
+// tinted alpha layer. Accumulating in floats (not canvas alpha) means a
+// 1,000-preset core rolls off smoothly instead of clipping to a solid disc.
+// Upscaling the small layer with smoothing provides the final softness.
+const GLOW_RES = 4, GLOW_MAX_A = .38;
+const glowCv = document.createElement("canvas"), gctx = glowCv.getContext("2d");
+glowCv.id = "glow";
+cv.before(glowCv);   // sits under the main canvas; page background shows through both
+// Compact (1 - r²/R²)³ kernel: Gaussian-like, but reaches exactly zero at a
+// circular edge, so the tone curve can't amplify a square cutoff.
+// R = 15 glow px ≈ 60 CSS px: merges a cluster, keeps its shape.
+const KERN = (() => {
+  const R = 15, k = [];
+  for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
+    const u = 1 - (dx * dx + dy * dy) / (R * R);
+    if (u > 0) k.push(dx, dy, u * u * u);
+  }
+  return Float32Array.from(k);
+})();
+// Buffers are reused across rebuilds; only a window resize reallocates them.
+let field = null, glowImg = null, built = null;   // built: view + key the layer was made for
+
+function rebuildGlow() {
+  const W = Math.ceil(state.cssW / GLOW_RES), H = Math.ceil(state.cssH / GLOW_RES);
+  if (glowCv.width !== W || glowCv.height !== H) { glowCv.width = W; glowCv.height = H; }
+  if (!field || field.length !== W * H) {
+    field = new Float32Array(W * H); glowImg = gctx.createImageData(W, H);
+  } else { field.fill(0); glowImg.data.fill(0); }
+  for (const p of state.lib) {
+    const q = toPx(p), cx = Math.round(q.x / GLOW_RES), cy = Math.round(q.y / GLOW_RES);
+    for (let k = 0; k < KERN.length; k += 3) {
+      const x = cx + KERN[k], y = cy + KERN[k + 1];
+      if (x >= 0 && x < W && y >= 0 && y < H) field[y * W + x] += KERN[k + 2];
+    }
+  }
+  // power-compress so a 1,000-preset core and a 50-preset strand both read
+  // while the core still deepens toward its centre; normalised against the
+  // 98th-percentile occupied cell (sampled every 3rd cell)
+  let m = 0;
+  for (let i = 0; i < field.length; i++) {
+    field[i] = Math.pow(field[i], .4);
+    if (i % 3 === 0 && field[i] > .02) m++;
+  }
+  const nz = new Float32Array(m); m = 0;
+  for (let i = 0; i < field.length; i += 3) if (field[i] > .02) nz[m++] = field[i];
+  nz.sort();
+  const ref = nz.length ? nz[Math.floor(nz.length * .98)] : 1;
+  const n = parseInt(state.color.slice(1), 16), r = n >> 16 & 255, g = n >> 8 & 255, b = n & 255;
+  const px = glowImg.data, norm = 1 / (1 - Math.exp(-2.2));
+  for (let i = 0; i < field.length; i++) {
+    const t = field[i] / ref;
+    if (t < .002) continue;
+    px[i * 4] = r; px[i * 4 + 1] = g; px[i * 4 + 2] = b;
+    px[i * 4 + 3] = Math.min(255, GLOW_MAX_A * (1 - Math.exp(-2.2 * t)) * norm * 255);
+  }
+  gctx.putImageData(glowImg, 0, 0);
+  contours = buildContours(field, W, H, ref);
+}
+
+function drawGlow(enterK) {
+  const v = state.view;
+  const key = [state.type, state.color, state.cssW, state.cssH].join();
+  const viewChanged = built && (v.scale !== built.v.scale || v.offX !== built.v.offX ||
+    v.offY !== built.v.offY || v.dMinX !== built.v.dMinX || v.dMinY !== built.v.dMinY);
+  // Rebuild on a new type/size immediately, but for camera moves only once the
+  // glide settles; mid-glide the cached layer is transformed (below) instead.
+  const settled = !state.cameraMoving && performance.now() - state.interactAt > 160;
+  if (!built || built.key !== key || (viewChanged && settled)) {
+    rebuildGlow();
+    built = { key, v: { ...v } };
+  }
+  // Affine map from the view the layer was built in to the current one.
+  const B = built.v, a = v.scale / B.scale;
+  const ex = v.offX + (B.dMinX - v.dMinX) * v.scale - B.offX * a;
+  const ey = v.h - v.offY - (B.dMinY - v.dMinY) * v.scale - (B.h - B.offY) * a;
+  // The glow is its own quarter-res <canvas> element, stretched by CSS and
+  // moved with a CSS transform, so the compositor upscales it on the GPU for
+  // free. Blitting it into the main canvas instead cost 28–85ms per frame at
+  // 5K Retina, which made glides crawl on large windows.
+  const gs = glowCv.style;
+  const w = glowCv.width * GLOW_RES + "px", h = glowCv.height * GLOW_RES + "px";
+  if (gs.width !== w) gs.width = w;
+  if (gs.height !== h) gs.height = h;
+  const tf = `matrix(${a},0,0,${a},${ex},${ey})`, op = String(enterK);
+  if (gs.transform !== tf) gs.transform = tf;
+  if (gs.opacity !== op) gs.opacity = op;
+  ctx.save();
+  ctx.transform(a, 0, 0, a, ex, ey);
+  // Topographic rings: hairlines in the type colour, inner rings a touch
+  // stronger, so cluster shape and steepness read without adding noise.
+  ctx.lineWidth = .75 / a; ctx.lineJoin = "round";
+  for (const c of contours) {
+    ctx.strokeStyle = hexA(state.color, c.alpha * enterK);
+    ctx.stroke(c.path);
+  }
+  ctx.restore();
+}
+
+/* ---------- contours ----------
+   Marching squares over the same quarter-res density field as the glow, so
+   the rings always agree with it. Levels are fractions of the normalised
+   field; built only when the field is (view change), stroked each frame. */
+const CONTOUR_LEVELS = [.05, .13, .25, .42, .66];
+let contours = [];
+// edge ids: 0 top, 1 right, 2 bottom, 3 left  →  segments per case
+const MS = [[], [[3, 2]], [[2, 1]], [[3, 1]], [[0, 1]], [[0, 1], [3, 2]], [[0, 2]], [[0, 3]],
+            [[0, 3]], [[0, 2]], [[0, 3], [1, 2]], [[0, 1]], [[3, 1]], [[2, 1]], [[3, 2]], []];
+function buildContours(f, W, H, ref) {
+  const S = GLOW_RES;
+  return CONTOUR_LEVELS.map((lv, li) => {
+    const L = lv * ref, path = new Path2D();
+    const lerp = (v0, v1) => (L - v0) / ((v1 - v0) || 1e-9);
+    let a, b, c, d, x, y;
+    // writes the crossing on edge e straight into the path (no temp arrays)
+    const to = (e, move) => {
+      const px = e === 0 ? x + lerp(a, b) : e === 1 ? x + 1 : e === 2 ? x + lerp(d, c) : x;
+      const py = e === 0 ? y : e === 1 ? y + lerp(b, c) : e === 2 ? y + 1 : y + lerp(a, d);
+      move ? path.moveTo(px * S, py * S) : path.lineTo(px * S, py * S);
+    };
+    for (y = 0; y < H - 1; y++) for (x = 0; x < W - 1; x++) {
+      a = f[y * W + x]; b = f[y * W + x + 1]; c = f[(y + 1) * W + x + 1]; d = f[(y + 1) * W + x];
+      const idx = (a > L) << 3 | (b > L) << 2 | (c > L) << 1 | (d > L);
+      if (idx === 0 || idx === 15) continue;
+      for (const seg of MS[idx]) { to(seg[0], true); to(seg[1], false); }
+    }
+    return { path, alpha: .13 + .14 * li / (CONTOUR_LEVELS.length - 1) };
+  });
+}
+
+/* ---------- render on demand ----------
+   The map is static most of the time, so frames are only scheduled while
+   something is actually moving (camera glide, type-switch fade, arrival
+   ripple/spring) or after an input changes what's drawn. Idle = zero work. */
+let rafId = 0;
+function requestDraw() { if (!rafId) rafId = requestAnimationFrame(draw); }
+
+function draw() {
+  rafId = 0;
+  ctx.clearRect(0, 0, state.cssW, state.cssH);
+  const now = performance.now();
+  stepCamera(now);
+  if (!state.view) return;
+
+  const n = state.lib.length || 1;
+  if (state.lib.length) drawGlow(reduceMotion ? 1 : easeOut((now - state.enterAt) / 700));
+
+  // Library points: weighted by local density — dense cores are finer and
+  // darker (texture over the glow), sparse outliers stay legible.
+  for (let i = 0; i < state.lib.length; i++) {
+    const p = state.lib[i];
+    const q = toPx(p);
+    const k = reduceMotion ? 1 : easeOut((now - state.enterAt - (i / n) * 260) / 420);
+    if (k <= 0) continue;
+    const hovered = state.hover === p, d = p.d ?? .5;
+    ctx.beginPath();
+    ctx.arc(q.x, q.y, (hovered ? 5.5 : 3.4 - 1.2 * d) * (0.5 + 0.5 * k), 0, 7);
+    ctx.fillStyle = hexA(state.color, (hovered ? 0.95 : 0.32 + 0.4 * d) * k);
+    ctx.fill();
+    if (hovered) { ctx.lineWidth = 2; ctx.strokeStyle = "#fff"; ctx.stroke(); }
+  }
+
+  // Generated points: solid, white-ringed, with a gentle arrival ripple.
+  for (const p of state.gen) {
+    const q = toPx(p);
+    const age = (now - p.born) / 1000;
+    if (!reduceMotion && age < 1.4) {
+      const t = easeOut(age / 1.4);
+      ctx.beginPath(); ctx.arc(q.x, q.y, 8 + t * 38, 0, 7);
+      ctx.strokeStyle = hexA(state.color, 0.45 * (1 - t));
+      ctx.lineWidth = 1.5; ctx.stroke();
+    }
+    const s = reduceMotion ? 1 : spring(age);
+    const sel = state.selected === p, hov = state.hover === p;
+    if (sel) {
+      ctx.beginPath(); ctx.arc(q.x, q.y, 13 * s, 0, 7);
+      ctx.fillStyle = hexA(state.color, 0.16); ctx.fill();
+    }
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.18)"; ctx.shadowBlur = 8; ctx.shadowOffsetY = 2;
+    ctx.beginPath(); ctx.arc(q.x, q.y, (hov ? 8.5 : 7.5) * s, 0, 7);
+    ctx.fillStyle = "#fff"; ctx.fill();
+    ctx.restore();
+    ctx.beginPath(); ctx.arc(q.x, q.y, (hov ? 6 : 5) * s, 0, 7);
+    ctx.fillStyle = state.color; ctx.fill();
+  }
+
+  const animating = state.cameraMoving || (!reduceMotion &&
+    (now - state.enterAt < 800 || state.gen.some(p => now - p.born < 1500)));
+  if (animating) requestDraw();
+  else lastFrame = 0;   // next frame after idle starts with a fresh dt
+}
+
+/* ---------- hit testing (pointer-driven, not per frame) ---------- */
+function pick(mx, my) {
+  if (!state.view) return null;
+  let best = null, bestD = 12;
+  // generated first so they win ties over library dots underneath
+  for (const p of [...state.gen].reverse().concat(state.lib)) {
+    const q = toPx(p);
+    const d = Math.hypot(q.x - mx, q.y - my);
+    if (d < bestD) { bestD = d; best = { p, q }; }
+  }
+  return best;
+}
+
+function updateHover() {
+  const hit = state.mouse && pick(state.mouse.x, state.mouse.y);
+  const next = hit ? hit.p : null;
+  if (next !== state.hover) { state.hover = next; requestDraw(); }
+  if (!drag || !drag.moved) cv.style.cursor = hit && hit.p.download_id ? "pointer" : "grab";
+  if (hit) {
+    tooltip.textContent = hit.p.name;
+    tooltip.style.left = hit.q.x + "px";
+    tooltip.style.top = hit.q.y + "px";
+    tooltip.style.opacity = 1;
+  } else tooltip.style.opacity = 0;
+}
+
+/* ---------- segmented control ---------- */
+const segWrap = document.querySelector(".seg-wrap");
+
+// Phone-width section menu (hamburger). On wider screens the button is hidden
+// and the segmented control is always visible, so this is a no-op there.
+const headerEl = document.querySelector("header"), menuBtn = $("menubtn");
+function setMenu(open) {
+  headerEl.classList.toggle("menu-open", open);
+  menuBtn.setAttribute("aria-expanded", open);
+}
+menuBtn.onclick = () => setMenu(!headerEl.classList.contains("menu-open"));
+document.addEventListener("pointerdown", e => {
+  if (headerEl.classList.contains("menu-open") && !headerEl.contains(e.target)) setMenu(false);
+});
+function syncSegMask() {
+  segWrap.classList.toggle("at-end", segWrap.scrollLeft + segWrap.clientWidth >= segWrap.scrollWidth - 2);
+}
+segWrap.addEventListener("scroll", syncSegMask, { passive: true });
+
+function moveThumb(btn, animate = true) {
+  if (!animate) thumb.style.transition = "none";
+  thumb.style.width = btn.offsetWidth + "px";
+  thumb.style.transform = `translateX(${btn.offsetLeft}px)`;
+  thumb.style.opacity = 1;
+  if (!animate) { thumb.offsetWidth; thumb.style.transition = ""; }
+}
+
+const typeByName = {};
+async function loadTypes() {
+  let types;
+  try { types = await (await fetch("/api/types")).json(); }
+  catch (e) { emptyEl.textContent = "Couldn't reach the server."; return; }
+  if (!types.length) {
+    emptyEl.innerHTML = "No trained models yet.<code class='mono'>serumgen train bass</code>";
+    return;
+  }
+  for (const t of types) {
+    const b = document.createElement("button");
+    const c = colorFor(t);
+    b.innerHTML = `<span class="dot" style="background:${c}"></span><span></span><span class="n">${t.count}</span>`;
+    b.children[1].textContent = typeLabel(t.type);
+    b.title = `${t.count} presets`;   // counts are hidden on narrower screens
+    b.dataset.type = t.type; typeByName[t.type] = t;
+    b.onpointerdown = () => selectType(t, b);   // respond on press, not release
+    b.onclick = () => setMenu(false);
+    b.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selectType(t, b); setMenu(false); } };
+    segEl.appendChild(b);
+  }
+  // Open on the richest type — the fullest map makes the best first impression.
+  const i = types.reduce((b, t, k) => t.count > types[b].count ? k : b, 0);
+  await selectType(types[i], segEl.querySelectorAll("button")[i], false);
+  syncSegMask();
+}
+
+async function selectType(t, btn, animate = true) {
+  if (state.type === t.type) return;
+  segEl.querySelectorAll("button").forEach(c => c.classList.toggle("active", c === btn));
+  moveThumb(btn, animate);
+  btn.scrollIntoView({ block: "nearest", inline: "nearest", behavior: reduceMotion ? "auto" : "smooth" });
+
+  state.type = t.type;
+  state.color = colorFor(t);
+  document.documentElement.style.setProperty("--type", state.color);
+  $("menulabel").textContent = typeLabel(t.type);
+  state.gen = state.session.filter(g => g.type === t.type);
+  state.lib = [];
+  // Card follows the section: this type's latest preset, or closed if it has
+  // none yet. Frame the new map around it straight away rather than gliding.
+  if (state.gen.length) showResult(state.gen[state.gen.length - 1]);
+  else { card.classList.remove("show"); state.selected = null; }
+  syncInset(); state.inset = { ...state.insetTarget };
+  glowCv.style.opacity = "0"; contours = [];   // old type's terrain off while the next loads
+  state.cam = { z: 1, x: 0, y: 0 }; state.camTarget = { z: 1, x: 0, y: 0 };
+  renderSession();
+  emptyEl.textContent = ""; emptyEl.style.display = "flex";
+  genBtn.disabled = true; statusEl.textContent = "Loading…";
+
+  const data = await (await fetch("/api/library?type=" + encodeURIComponent(t.type))).json();
+  if (state.type !== t.type) return;          // user switched again mid-load
+  if (data.error) { statusEl.textContent = data.error; return; }
+  state.lib = data.points;
+  computeDensity();
+  state.targetBounds = targetBounds();
+  state.bounds = { ...state.targetBounds };   // no camera move on type switch
+  computeView();
+  state.enterAt = performance.now();
+  requestDraw();
+  emptyEl.style.display = "none"; genBtn.disabled = false;
+  syncStatus();
+}
+function syncStatus() {
+  statusEl.textContent = `${state.lib.length} presets` + (state.gen.length ? ` · ${state.gen.length} new` : "");
+}
+
+/* ---------- result card ----------
+   While the card is open the map is framed in the space beside it (desktop:
+   the card is a right-hand column) or above it (mobile: a bottom sheet over
+   the dock), so a fresh preset never lands underneath it. The camera glides
+   to the new framing rather than jumping. offsetLeft/Top are layout values,
+   unaffected by the card's scale-in transform. */
+function syncInset() {
+  const t = { r: 0, b: 0 };
+  if (card.classList.contains("show")) {
+    if (card.offsetLeft > state.cssW / 2) t.r = state.cssW - card.offsetLeft;
+    else t.b = Math.max(0, state.cssH - card.offsetTop - 120 + 12);   // 120 = dock margin already reserved
+  }
+  if (t.r !== state.insetTarget.r || t.b !== state.insetTarget.b) {
+    state.insetTarget = t; requestDraw();
+  }
+}
+function hideCard() { card.classList.remove("show"); state.selected = null; syncInset(); requestDraw(); }
+
+const typeLabel = t => t.charAt(0).toUpperCase() + t.slice(1);
+function showResult(r) {
+  state.selected = r;
+  requestDraw();
+  $("cardname").textContent = r.name;
+  $("carddot").style.background = r.color;
+  $("cardmeta").textContent = `${typeLabel(r.type)}  ·  temperature ${r.temperature.toFixed(2)}`;
+  $("carddonor").textContent = r.donor ? `Based on ${r.donor}` : "";
+  $("carddonor").title = r.donor || "";
+  const dl = $("dl");
+  dl.href = "/api/download/" + r.download_id;
+  dl.setAttribute("download", r.name + ".SerumPreset");
+  card.classList.add("show");
+  renderSession();
+  syncInset();
+}
+// Session list for the current section (type), newest first, with a batch
+// download of just that section. Other sections keep theirs until reload.
+function renderSession() {
+  const list = $("recentlist");
+  list.innerHTML = "";
+  for (const g of [...state.gen].reverse()) {
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="dot"></span><span class="mono"></span><span class="t tnum"></span>`;
+    li.children[0].style.background = g.color;
+    li.children[1].textContent = g.name;
+    li.children[2].textContent = g.temperature.toFixed(2);
+    li.title = `Based on ${g.donor || "?"}`;
+    li.classList.toggle("sel", g === state.selected);
+    li.onclick = () => showResult(g);
+    list.appendChild(li);
+  }
+  const n = state.gen.length;
+  $("recent").hidden = n < 2;
+  $("recenthead").textContent = `${typeLabel(state.type)} · this session`;
+  const all = $("dlall");
+  all.textContent = `Download all (${n})`;
+  all.title = `Download these ${n} as one .zip`;
+  all.href = "/api/download-all?ids=" + state.gen.map(g => g.download_id).join(",");
+  all.setAttribute("download", "");
+}
+
+async function generate() {
+  if (state.busy || genBtn.disabled) return;
+  state.busy = true;
+  genBtn.classList.add("busy"); genLabel.textContent = "Generating";
+  const temperature = parseFloat(tempInput.value), type = state.type;
+  try {
+    const res = await fetch("/api/generate", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type, temperature }),
+    });
+    const r = await res.json();
+    if (r.error) { statusEl.textContent = r.error; return; }
+    r.born = performance.now(); r.temperature = temperature;
+    r.type = type; r.color = colorFor(typeByName[type] || { type });
+    state.session.push(r);
+    if (state.type !== type) { renderSession(); return; }   // switched mid-request: keep it, don't jump
+    state.gen.push(r);
+    state.targetBounds = targetBounds();
+    showResult(r);
+    keepInView(r);
+    syncStatus();
+    if (navigator.vibrate) navigator.vibrate(8);
+  } catch (e) {
+    statusEl.textContent = "Something went wrong.";
+  } finally {
+    state.busy = false;
+    genBtn.classList.remove("busy"); genLabel.textContent = "Generate";
+  }
+}
+
+/* ---------- input ---------- */
+/* ---------- zoom & pan ----------
+   Wheel / pinch zooms about the cursor, drag pans, buttons and +/-/0 keys
+   step about the centre of the free area. Direct manipulation is applied
+   immediately (it must track the hand); stepped zoom glides. */
+const ZMIN = .25, ZMAX = 24;
+const clampZ = z => Math.min(ZMAX, Math.max(ZMIN, z));
+function touched() {
+  state.interactAt = performance.now();
+  clearTimeout(touched.t); touched.t = setTimeout(requestDraw, 180);   // settle → glow rebuild
+}
+function zoomAt(f, mx, my, immediate) {
+  const from = immediate ? state.cam : state.camTarget;
+  const z = clampZ(from.z * f), r = z / from.z;
+  const { cx, cy } = baseView(state.bounds, state.inset).area;
+  const next = { z, x: mx - cx - (mx - cx - from.x) * r, y: my - cy - (my - cy - from.y) * r };
+  state.camTarget = next;
+  if (immediate) { state.cam = { ...next }; computeView(); touched(); }
+  requestDraw(); syncZoomUI();
+}
+function zoomStep(f) {
+  if (!state.bounds) return;
+  const { cx, cy } = baseView(state.bounds, state.inset).area;
+  zoomAt(f, cx, cy, false);
+}
+function resetCam() { state.camTarget = { z: 1, x: 0, y: 0 }; requestDraw(); syncZoomUI(); }
+function syncZoomUI() {
+  const t = state.camTarget;
+  $("zfit").disabled = t.z === 1 && t.x === 0 && t.y === 0;
+  $("zin").disabled = t.z >= ZMAX; $("zout").disabled = t.z <= ZMIN;
+}
+// After a generate: if the user's zoom/pan would leave the new point outside
+// the free area, pan (not zoom) just enough to bring it in with some margin.
+function keepInView(p) {
+  const ct = state.camTarget;
+  if (ct.z === 1 && ct.x === 0 && ct.y === 0) return;     // auto framing already includes it
+  const v = withCam(baseView(state.targetBounds, state.insetTarget), ct);
+  const a = v.area, m = 48;
+  const sx = v.offX + (p.x - v.dMinX) * v.scale, sy = v.h - (v.offY + (p.y - v.dMinY) * v.scale);
+  const dx = sx < a.l + m ? a.l + m - sx : sx > a.r - m ? a.r - m - sx : 0;
+  const dy = sy < a.t + m ? a.t + m - sy : sy > a.b - m ? a.b - m - sy : 0;
+  if (dx || dy) { state.camTarget = { ...ct, x: ct.x + dx, y: ct.y + dy }; requestDraw(); syncZoomUI(); }
+}
+
+cv.addEventListener("wheel", e => {
+  if (!state.view) return;
+  e.preventDefault();
+  const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;          // line-mode wheels (Firefox)
+  zoomAt(Math.exp(-dy * (e.ctrlKey ? .01 : .0015)), e.clientX, e.clientY, true);  // ctrl = trackpad pinch
+}, { passive: false });
+
+let drag = null;
+cv.addEventListener("pointerdown", e => {
+  if (e.button !== 0) return;
+  drag = { id: e.pointerId, x0: e.clientX, y0: e.clientY, cx: state.cam.x, cy: state.cam.y, moved: false };
+  cv.setPointerCapture(e.pointerId);
+});
+cv.addEventListener("pointermove", e => {
+  state.mouse = { x: e.clientX, y: e.clientY };
+  if (drag && drag.id === e.pointerId) {
+    const dx = e.clientX - drag.x0, dy = e.clientY - drag.y0;
+    if (!drag.moved && Math.hypot(dx, dy) > 4) {
+      drag.moved = true; cv.style.cursor = "grabbing"; tooltip.style.opacity = 0;
+    }
+    if (drag.moved) {
+      state.cam.x = state.camTarget.x = drag.cx + dx;
+      state.cam.y = state.camTarget.y = drag.cy + dy;
+      computeView(); touched(); requestDraw(); syncZoomUI();
+      return;
+    }
+  }
+  updateHover();
+});
+function endDrag(e) {
+  if (!drag || drag.id !== e.pointerId) return;
+  const wasDrag = drag.moved; drag = null;
+  if (!wasDrag && e.type === "pointerup") {          // a click, not a pan: select a generated point
+    const hit = pick(e.clientX, e.clientY);
+    if (hit && hit.p.download_id) showResult(hit.p);
+  }
+  updateHover();
+}
+cv.addEventListener("pointerup", endDrag);
+cv.addEventListener("pointercancel", endDrag);
+cv.addEventListener("pointerleave", () => { if (!drag) { state.mouse = null; updateHover(); } });
+cv.addEventListener("dblclick", e => zoomAt(2, e.clientX, e.clientY, false));
+
+$("zin").onclick = () => zoomStep(1.6);
+$("zout").onclick = () => zoomStep(1 / 1.6);
+$("zfit").onclick = resetCam;
+
+function syncSlider() {
+  const v = parseFloat(tempInput.value);
+  tempVal.textContent = v.toFixed(2);
+  const p = (v - tempInput.min) / (tempInput.max - tempInput.min) * 100;
+  tempInput.style.setProperty("--p", p + "%");
+}
+tempInput.addEventListener("input", syncSlider);
+genBtn.addEventListener("click", generate);
+addEventListener("keydown", e => {
+  if (e.key.toLowerCase() === "g" && !e.metaKey && !e.ctrlKey && !e.altKey) generate();
+  if (e.key === "Escape") { hideCard(); setMenu(false); }
+  if (e.metaKey || e.ctrlKey || e.altKey || e.target === tempInput) return;
+  if (e.key === "=" || e.key === "+") zoomStep(1.6);
+  if (e.key === "-" || e.key === "_") zoomStep(1 / 1.6);
+  if (e.key === "0") resetCam();
+});
+addEventListener("resize", () => {
+  fit(); syncInset();
+  const a = segEl.querySelector("button.active"); if (a) moveThumb(a, false);
+  syncSegMask();
+});
+
+syncSlider(); fit(); syncZoomUI(); loadTypes();
+</script>
+</body>
+</html>

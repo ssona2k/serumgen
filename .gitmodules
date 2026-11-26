@@ -1,0 +1,3 @@
+[submodule "serum-preset-packager"]
+	path = serum-preset-packager
+	url = https://github.com/KennethWussmann/serum-preset-packager

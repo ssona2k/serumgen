@@ -1,0 +1,34 @@
+[project]
+name = "serumgen"
+version = "0.1.0"
+description = "Train a VAE on your own Serum 2 presets and generate new ones"
+requires-python = ">=3.11"
+readme = "README.md"
+license = { text = "MIT" }
+dependencies = [
+    "torch",
+    "scikit-learn",
+    "numpy",
+    "cbor2",
+    "zstandard",
+    "msgpack",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+serumgen = "serumgen.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.setuptools]
+packages = ["serumgen"]
+
+[tool.setuptools.package-data]
+serumgen = ["static/*.html", "static/brand/*.svg"]
